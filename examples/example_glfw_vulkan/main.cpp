@@ -45,6 +45,9 @@ static ImGui_ImplVulkanH_Window g_MainWindowData;
 static int                      g_MinImageCount = 2;
 static bool                     g_SwapChainRebuild = false;
 
+static PFN_vkCmdBeginRenderingKHR cmdBeginRenderingKHR = nullptr;
+static PFN_vkCmdEndRenderingKHR cmdEndRenderingKHR = nullptr;
+
 static void check_vk_result(VkResult err)
 {
     if (err == 0)
@@ -159,8 +162,8 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 
     // Create Logical Device (with 1 queue)
     {
-        int device_extension_count = 1;
-        const char* device_extensions[] = { "VK_KHR_swapchain" };
+        int device_extension_count = 2;
+        const char* device_extensions[] = { "VK_KHR_swapchain", "VK_KHR_dynamic_rendering" };
         const float queue_priority[] = { 1.0f };
         VkDeviceQueueCreateInfo queue_info[1] = {};
         queue_info[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -176,6 +179,9 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
         err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
         check_vk_result(err);
         vkGetDeviceQueue(g_Device, g_QueueFamily, 0, &g_Queue);
+
+        cmdBeginRenderingKHR = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(vkGetDeviceProcAddr(g_Device, "vkCmdBeginRenderingKHR"));
+        cmdEndRenderingKHR = reinterpret_cast<PFN_vkCmdEndRenderingKHR>(vkGetDeviceProcAddr(g_Device, "vkCmdEndRenderingKHR"));
     }
 
     // Create Descriptor Pool
@@ -290,7 +296,26 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
         check_vk_result(err);
     }
     {
-        VkRenderPassBeginInfo info = {};
+        VkRenderingAttachmentInfo attachmentInfo = {};
+        attachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+        attachmentInfo.imageView = fd->BackbufferView;
+        attachmentInfo.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachmentInfo.resolveMode = VK_RESOLVE_MODE_NONE;
+        attachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachmentInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachmentInfo.clearValue = wd->ClearValue;
+
+        VkRenderingInfo renderingInfo = {};
+        renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+        renderingInfo.renderArea.extent.width = wd->Width;
+        renderingInfo.renderArea.extent.height = wd->Height;
+        renderingInfo.layerCount = 1;
+        renderingInfo.viewMask = 0;
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachments = &attachmentInfo;
+
+        cmdBeginRenderingKHR(fd->CommandBuffer, &renderingInfo);
+        /*VkRenderPassBeginInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         info.renderPass = wd->RenderPass;
         info.framebuffer = fd->Framebuffer;
@@ -298,14 +323,14 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
         info.renderArea.extent.height = wd->Height;
         info.clearValueCount = 1;
         info.pClearValues = &wd->ClearValue;
-        vkCmdBeginRenderPass(fd->CommandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(fd->CommandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);*/
     }
 
     // Record dear imgui primitives into command buffer
     ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
 
     // Submit command buffer
-    vkCmdEndRenderPass(fd->CommandBuffer);
+    cmdEndRenderingKHR(fd->CommandBuffer);
     {
         VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSubmitInfo info = {};
@@ -422,7 +447,11 @@ int main(int, char**)
     init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator = g_Allocator;
     init_info.CheckVkResultFn = check_vk_result;
-    ImGui_ImplVulkan_Init(&init_info, wd->RenderPass);
+
+    init_info.UseDynamicRendering = true;
+    init_info.ColorAttachmentFormat = wd->SurfaceFormat.format;
+
+    ImGui_ImplVulkan_Init(&init_info, nullptr);
 
     // Load Fonts
     // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
