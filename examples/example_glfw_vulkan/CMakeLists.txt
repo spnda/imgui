@@ -45,4 +45,3 @@ target_link_libraries(example_glfw_vulkan ${LIBRARIES})
 target_compile_definitions(example_glfw_vulkan PUBLIC -DImTextureID=ImU64)
 # target_compile_definitions(example_glfw_vulkan PUBLIC IMGUI_VULKAN_DEBUG_REPORT)
 target_compile_features(example_glfw_vulkan PUBLIC cxx_std_17)
-
